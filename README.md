@@ -1,8 +1,8 @@
 # rotor_toolkit
 
-`rotor_toolkit` is a Python-based design and modeling library for rotorcraft and turbomachinery components, focused on modular, parametric geometry generation. The project began as a way to generate and manipulate 2D airfoils, but it is evolving into a pipeline for defining and exporting full 3D rotor assemblies for UAS, turbomachinery, hydrodynamic vehicles, and helicopters.
+`rotor_toolkit` is a Python-based design and modeling library for rotorcraft and turbomachinery components, with a focus on modular, parametric geometry generation. The project began as a way to generate and manipulate 2D airfoils but is growing into a pipeline for defining and exporting full 3D rotor or stator assemblies for UAS, turbomachinery, hydrodynamic vehicles, and helicopters.
 
-The intent is to build a capable toolkit that supports exploratory design, optimization, and integration with external analysis and iteration tools. It emphasizes parametric modeling and generation of airfoil and blade sections, with the ability to output geometry in clean, exportable formats.
+The toolkit is designed to support exploratory design, optimization, and integration with external analysis and iteration tools. It emphasizes parametric modeling of airfoil and blade sections, with the ability to generate and output clean, structured geometry for downstream applications.
 
 ---
 
@@ -51,13 +51,19 @@ The intent is to build a capable toolkit that supports exploratory design, optim
 ```python
 from rotor_toolkit.airfoil import Airfoil
 
-# Generate a classic NACA 4-digit airfoil
+# Generate a classic NACA 2412 4-digit airfoil
 af = Airfoil(name="NACA2412", naca_code="2412", n_points=200)
 af.plot(save=True)
 
-# Create a spline airfoil from control points
+# Create a spline NACA 2412 airfoil from control points
 import numpy as np
-control_pts = np.array([[0.0, 0.0], [0.3, 0.05], [0.7, -0.02], [1.0, 0.0]])
+control_pts = np.array([
+    [0.0,  0.0],
+    [0.1,  0.06],
+    [0.3,  0.08],
+    [0.6,  0.02],
+    [0.9, -0.01],
+    [1.0,  0.0]])
 spline_af = Airfoil.from_spline("custom_spline", control_pts)
 spline_af.plot()
 ```
@@ -73,4 +79,4 @@ The goal is to support:
 - Rapid iteration
 - Future plug-in compatibility for meshing and MDO workflows
 
----
+---</file>
