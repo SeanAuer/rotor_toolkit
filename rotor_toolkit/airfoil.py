@@ -19,7 +19,7 @@ class Airfoil:
             coordinates (np.ndarray): Nx2 array of (x, y) points.
             equation (callable): Function to generate (x, y) points.
             file (str): Filename to read coordinates from.
-            naca_code (str): NACA 4-digit code to generate airfoil coordinates.
+            naca_code (str): NACA 4 or 5-digit code to generate airfoil coordinates.
             n_points (int): Number of points to generate along the airfoil.
         """
         self.name = name
@@ -43,45 +43,137 @@ class Airfoil:
         if self.coordinates is not None:
             self._ensure_closed()
 
+    @property
+    def upper_surface_control_points(self):
+        """
+        Return upper surface control points if defined (used for parametric design).
+        """
+        return getattr(self, '_upper_surface_control_points', None)
+
+    @upper_surface_control_points.setter
+    def upper_surface_control_points(self, points):
+        """
+        Set upper surface control points.
+        """
+        self._upper_surface_control_points = np.array(points)
+
+    @property
+    def lower_surface_control_points(self):
+        """
+        Return lower surface control points if defined (used for parametric design).
+        """
+        return getattr(self, '_lower_surface_control_points', None)
+
+    @lower_surface_control_points.setter
+    def lower_surface_control_points(self, points):
+        """
+        Set lower surface control points.
+        """
+        self._lower_surface_control_points = np.array(points)
+
+
     @classmethod
-    def from_spline(cls, name, control_points, n_points=100, degree=3):
+    def from_control_points(
+        cls,
+        name,
+        upper_surface_control_points,
+        lower_surface_control_points,
+        upper_surface_angles,
+        lower_surface_angles,
+        upper_trailing_edge_angle=-5.0,
+        lower_trailing_edge_angle=5.0,
+        n_points=100
+    ):
         """
-        Create an Airfoil from a B-spline defined by control points.
+        Create an Airfoil using control points and tangency angles at each point.
         Args:
-            name (str): Name of the airfoil.
-            control_points (np.ndarray): Array of control points (Nx2).
-            n_points (int): Number of points to sample on the curve.
-            degree (int): Degree of the B-spline (default is 3).
+            name (str): Airfoil name.
+            upper_surface_control_points (list of [x, y]): Upper surface points (LE/TE optional, positive y expected).
+            lower_surface_control_points (list of [x, y]): Lower surface points (LE/TE optional, negative y expected).
+            upper_surface_angles (list of float): Tangent angles (deg) at each upper point.
+            lower_surface_angles (list of float): Tangent angles (deg) at each lower point.
+            upper_trailing_edge_angle (float): TE angle (deg) upper surface.
+            lower_trailing_edge_angle (float): TE angle (deg) lower surface.
+            n_points (int): Points to sample per surface.
         Returns:
-            Airfoil: New Airfoil object with spline-generated coordinates.
+            Airfoil: Airfoil object with interpolated coordinates.
         """
-        n_control = len(control_points)
-        if n_control < degree + 1:
-            raise ValueError(f"Need at least {degree + 1} control points for degree {degree} spline.")
-        
-        # Create uniform knot vector with clamped ends
-        knots = np.concatenate((
-            np.zeros(degree),
-            np.linspace(0, 1, n_control - degree + 1),
-            np.ones(degree)
-        ))
+        import numpy as np
 
-        # Separate x and y
-        cx = control_points[:, 0]
-        cy = control_points[:, 1]
-        spline_x = BSpline(knots, cx, degree)
-        spline_y = BSpline(knots, cy, degree)
+        def angle_to_vector(angle_deg):
+            angle_rad = np.deg2rad(angle_deg)
+            return np.array([np.cos(angle_rad), np.sin(angle_rad)])
 
-        # Evaluate spline
-        t_vals = np.linspace(0, 1, n_points)
-        x_vals = spline_x(t_vals)
-        y_vals = spline_y(t_vals)
-        coords = np.stack([x_vals, y_vals], axis=1)
+        def process_surface(points, angles, is_upper, trailing_angle):
+            points = np.array(points)
+            angles = list(angles)
+            # Handle empty input: just LE and TE
+            if points.shape[0] == 0:
+                points = np.array([[0.0, 0.0], [1.0, 0.0]])
+                angles = [270.0 if is_upper else 90.0, trailing_angle]
+                return points, angles
+            # Leading edge logic
+            if not np.allclose(points[0], [0.0, 0.0]):
+                points = np.vstack([[0.0, 0.0], points])
+                default_le_angle = 270.0 if is_upper else 90.0
+                angles = [default_le_angle] + angles
+            # Trailing edge logic
+            if not np.allclose(points[-1], [1.0, 0.0]):
+                points = np.vstack([points, [1.0, 0.0]])
+                angles = angles + [trailing_angle]
+            return points, angles
 
-        airfoil = cls(name=name, coordinates=coords, n_points=n_points)
-        airfoil.control_points = control_points
-        airfoil.spline_degree = degree
-        airfoil.knot_vector = knots
+        # Process upper and lower surfaces independently
+        upper_cp, upper_angles = process_surface(
+            upper_surface_control_points, upper_surface_angles, is_upper=True, trailing_angle=upper_trailing_edge_angle
+        )
+        lower_cp, lower_angles = process_surface(
+            lower_surface_control_points, lower_surface_angles, is_upper=False, trailing_angle=lower_trailing_edge_angle
+        )
+
+        # Convert angles to tangent vectors
+        upper_tangents = np.array([angle_to_vector(a) for a in upper_angles])
+        # For the lower surface, do not flip the y-component of the tangent vectors (preserve user geometry)
+        lower_tangents = np.array([angle_to_vector(a) for a in lower_angles])
+
+        def cubic_hermite(P0, P1, T0, T1, t):
+            t = np.asarray(t)
+            h00 = 2*t**3 - 3*t**2 + 1
+            h10 = t**3 - 2*t**2 + t
+            h01 = -2*t**3 + 3*t**2
+            h11 = t**3 - t**2
+            return (h00[:,None]*P0 + h10[:,None]*T0 + h01[:,None]*P1 + h11[:,None]*T1)
+
+        def spline_surface(control_pts, tangents):
+            segments = []
+            for i in range(len(control_pts) - 1):
+                chord = control_pts[i+1][0] - control_pts[i][0]
+                # Scale tangent vectors by local chord for smoothness
+                T0 = tangents[i] * chord
+                T1 = tangents[i+1] * chord
+                def seg_func(t, P0=control_pts[i], P1=control_pts[i+1], T0=T0, T1=T1):
+                    return cubic_hermite(P0, P1, T0, T1, t)
+                segments.append(seg_func)
+            def full_spline(t_array):
+                coords = []
+                n_seg = len(segments)
+                t_array = np.clip(np.array(t_array), 0, 1)
+                for t in t_array:
+                    seg_idx = min(int(t * n_seg), n_seg - 1)
+                    local_t = (t - seg_idx / n_seg) * n_seg
+                    coords.append(segments[seg_idx](np.array([local_t]))[0])
+                return np.array(coords)
+            return full_spline
+
+        # Sample upper and lower surfaces
+        t_sample = np.linspace(0, 1, n_points)
+        upper_coords = spline_surface(upper_cp, upper_tangents)(t_sample)
+        lower_coords = spline_surface(lower_cp, lower_tangents)(t_sample)
+        # Do NOT reverse lower_coords; stack as upper (LE to TE), then lower (TE to LE)
+        coords = np.vstack((upper_coords, lower_coords[::-1]))
+        airfoil = cls(name=name, coordinates=coords, n_points=len(coords))
+        airfoil._upper_surface_control_points = upper_cp
+        airfoil._lower_surface_control_points = lower_cp
         return airfoil
 
     def _generate_naca4_coordinates(self, code, n_points):
@@ -155,7 +247,8 @@ class Airfoil:
         coords = np.stack([x_coords, y_coords], axis=1)
         return coords
 
-    def _read_coordinates_from_file(self, file):
+    @staticmethod
+    def _read_coordinates_from_file(file):
         """
         Read airfoil coordinates from a file (CSV or DAT).
         """
@@ -248,6 +341,15 @@ class Airfoil:
         te_idx = np.argmax(dists)
         te = self.coordinates[te_idx]
         return np.linalg.norm(te - le)
+
+    @property
+    def chord(self):
+        """
+        Get the chord length of the airfoil.
+        Returns:
+            float: Chord length.
+        """
+        return self._chord_length()
 
     def __repr__(self):
         return f"Airfoil(name='{self.name}', n_points={len(self.coordinates)}, chord={self._chord_length():.3f})"
