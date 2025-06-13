@@ -6,7 +6,7 @@ QuinticHermiteCurve for the upper and lower surfaces. The airfoil is then
 assembled using rotor_toolkit's Airfoil class, with automatic closure and plotting.
 """
 
-from spline_toolkit import QuinticHermiteCurve, QuinticHermiteSpline
+from spline_toolkit import QuinticHermiteSegment, QuinticHermiteSpline
 from rotor_toolkit import Airfoil
 import numpy as np
 import math
@@ -20,18 +20,16 @@ import matplotlib.pyplot as plt
 p0 = np.array([0.0, 0.0])  # Leading edge
 p1 = np.array([1.0, 0.0])  # Trailing edge
 
-# Tangents (converted from angles in degrees to radians)
-# LE tangent: steep upward, TE tangent: shallow downward
-t0 = math.radians(90)
-t1 = math.radians(-10.0)
+# Tangents 
+t0 = [0.0, 1.0]  
+t1 = [np.cos(math.radians(-8.0)), np.sin(math.radians(-8.0))]
 
 # Curvatures (2nd derivatives of position)
-# Strong leading edge curvature, flat trailing edge
-c0 = np.array([10.0, -7.0])
+c0 = np.array([15.0, -4.87])
 c1 = np.array([0.0, 0.0])
 
 # Create upper surface spline curve
-upper_surface = QuinticHermiteCurve.from_controls(
+upper_surface = QuinticHermiteSpline.from_controls(
     [p0, p1],
     [t0, t1],
     [c0, c1]
@@ -45,18 +43,18 @@ upper_surface = QuinticHermiteCurve.from_controls(
 p2 = np.array([0.0, 0.0])  # Leading edge
 p3 = np.array([1.0, 0.0])  # Trailing edge
 
-# Tangents
-# LE tangent: steep downward, TE tangent: shallow upward
-t2 = math.radians(-90)
-t3 = math.radians(10.0)
+#
+# Tangents (set LE tangent to 90° down, TE tangent remains at +10°)
+t2 = np.array([np.cos(math.radians(-90.0)), np.sin(math.radians(-90.0))])  
+t3 = np.array([np.cos(math.radians(5.0)), np.sin(math.radians(5.0))])
 
 # Curvatures
 # Increased curvature at LE to simulate camber
-c2 = np.array([25.0, 9.0])
+c2 = np.array([5.0, 4.0])
 c3 = np.array([0.0, 0.0])
 
 # Create lower surface spline curve
-lower_surface = QuinticHermiteCurve.from_controls(
+lower_surface = QuinticHermiteSpline.from_controls(
     [p2, p3],
     [t2, t3],
     [c2, c3]
@@ -72,6 +70,6 @@ airfoil = Airfoil.from_spline(
     lower_surface=lower_surface,
     name="Spline Airfoil"
 )
-
+print(airfoil.upper_surface)
 # Plot airfoil shape
-airfoil.plot()
+airfoil.plot(n_points=1000, save=True) 

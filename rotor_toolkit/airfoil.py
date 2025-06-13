@@ -8,6 +8,41 @@ import plotly.graph_objects as go
 from scipy.interpolate import BSpline
 
 class Airfoil:
+    """
+    Represents a 2D airfoil shape, defined by coordinates or parametric equations.
+    """
+    def __init__(self, name, coordinates=None, equation=None, file=None, naca_code=None, n_points=100):
+        """
+        Initialize an Airfoil.
+        Args:
+            name (str): Name of the airfoil.
+            coordinates (np.ndarray): Nx2 array of (x, y) points.
+            equation (callable): Function to generate (x, y) points.
+            file (str): Filename to read coordinates from.
+            naca_code (str): NACA 4 or 5-digit code to generate airfoil coordinates.
+            n_points (int): Number of points to generate along the airfoil.
+        """
+        self.name = name
+        self.coordinates = coordinates
+        self.equation = equation
+        self.file = file
+        self.naca_code = naca_code
+        self.n_points = n_points
+        if naca_code is not None:
+            if len(naca_code) == 4 and naca_code.isdigit():
+                self.coordinates = self._generate_naca4_coordinates(naca_code, n_points)
+            elif len(naca_code) == 5 and naca_code.isdigit():
+                self.coordinates = self._generate_naca5_coordinates(naca_code, n_points)
+            else:
+                raise ValueError(f"Unrecognized NACA code: {naca_code}")
+        elif file is not None:
+            self.coordinates = self._read_coordinates_from_file(file)
+        elif equation is not None:
+            self.coordinates = equation(n_points)
+        # else: coordinates must be provided directly
+        if self.coordinates is not None:
+            self._ensure_closed()
+
     @classmethod
     def from_spline(cls, upper_surface, lower_surface, name=None, n_points=100):
         """
@@ -39,7 +74,10 @@ class Airfoil:
         if not np.allclose(coords[0], coords[-1]):
             coords = np.vstack([coords, coords[0]])
 
-        return cls(name=name, coordinates=coords, n_points=len(coords))
+        airfoil = cls(name=name, coordinates=coords, n_points=len(coords))
+        airfoil.upper_surface = upper_surface
+        airfoil.lower_surface = lower_surface
+        return airfoil
 
     @classmethod
     def from_curves(cls, upper_curve, lower_curve, name=None, n_points=100, curve_type='hermite'):
@@ -91,45 +129,10 @@ class Airfoil:
             coords = np.vstack([coords, coords[0]])
         # Create Airfoil and align to x-axis
         airfoil = cls(name=name, coordinates=coords, n_points=len(coords))
-        airfoil.align_to_x_axis()
+        airfoil._align_to_x_axis()
         airfoil.upper_curve = upper
         airfoil.lower_curve = lower
         return airfoil
-
-    """
-    Represents a 2D airfoil shape, defined by coordinates or parametric equations.
-    """
-    def __init__(self, name, coordinates=None, equation=None, file=None, naca_code=None, n_points=100):
-        """
-        Initialize an Airfoil.
-        Args:
-            name (str): Name of the airfoil.
-            coordinates (np.ndarray): Nx2 array of (x, y) points.
-            equation (callable): Function to generate (x, y) points.
-            file (str): Filename to read coordinates from.
-            naca_code (str): NACA 4 or 5-digit code to generate airfoil coordinates.
-            n_points (int): Number of points to generate along the airfoil.
-        """
-        self.name = name
-        self.coordinates = coordinates
-        self.equation = equation
-        self.file = file
-        self.naca_code = naca_code
-        self.n_points = n_points
-        if naca_code is not None:
-            if len(naca_code) == 4 and naca_code.isdigit():
-                self.coordinates = self._generate_naca4_coordinates(naca_code, n_points)
-            elif len(naca_code) == 5 and naca_code.isdigit():
-                self.coordinates = self._generate_naca5_coordinates(naca_code, n_points)
-            else:
-                raise ValueError(f"Unrecognized NACA code: {naca_code}")
-        elif file is not None:
-            self.coordinates = self._read_coordinates_from_file(file)
-        elif equation is not None:
-            self.coordinates = equation(n_points)
-        # else: coordinates must be provided directly
-        if self.coordinates is not None:
-            self._ensure_closed()
 
     @property
     def upper_surface_control_points(self):
@@ -159,7 +162,6 @@ class Airfoil:
         """
         self._lower_surface_control_points = np.array(points)
 
-
     @classmethod
     def from_control_points(
         cls,
@@ -168,8 +170,8 @@ class Airfoil:
         lower_surface_control_points,
         upper_surface_angles,
         lower_surface_angles,
-        upper_trailing_edge_angle=-5.0,
-        lower_trailing_edge_angle=5.0,
+        upper_trailing_edge_angle,
+        lower_trailing_edge_angle,
         n_points=100,
         curve_type="hermite"
     ):
@@ -188,7 +190,6 @@ class Airfoil:
         Returns:
             Airfoil: Airfoil object with interpolated coordinates.
         """
-        import numpy as np
 
         def angle_to_vector(angle_deg):
             angle_rad = np.deg2rad(angle_deg)
@@ -241,11 +242,11 @@ class Airfoil:
     def _generate_naca4_coordinates(self, code, n_points):
         """
         Generate coordinates for a NACA 4-digit airfoil using cosine spacing for better clustering near high-curvature regions.
+        Also sets upper_surface and lower_surface attributes for consistency with spline-based airfoils.
         """
         m = int(code[0]) / 100.0
         p = int(code[1]) / 10.0
         t = int(code[2:]) / 100.0
-        # Cosine spacing for x
         beta = np.linspace(0, np.pi, n_points)
         x = 0.5 * (1 - np.cos(beta))
         yt = 5 * t * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1015 * x**4)
@@ -263,31 +264,37 @@ class Airfoil:
         yu = yc + yt * np.cos(theta)
         xl = x + yt * np.sin(theta)
         yl = yc - yt * np.cos(theta)
-        # Combine upper and lower surfaces
         x_coords = np.concatenate([xu[::-1], xl[1:]])
         y_coords = np.concatenate([yu[::-1], yl[1:]])
         coords = np.stack([x_coords, y_coords], axis=1)
+        # Set upper_surface and lower_surface as simple objects with .sample(n)
+        class NacaSurface:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+            def sample(self, n):
+                idx = np.linspace(0, len(self.x)-1, n).astype(int)
+                return np.stack([self.x[idx], self.y[idx]], axis=1)
+        self.upper_surface = NacaSurface(xu[::-1], yu[::-1])
+        self.lower_surface = NacaSurface(xl[1:], yl[1:])
         return coords
 
     def _generate_naca5_coordinates(self, code, n_points):
         """
         Generate coordinates for a NACA 5-digit airfoil using cosine spacing.
-        This is a simplified implementation for demonstration.
+        Also sets upper_surface and lower_surface attributes for consistency with spline-based airfoils.
         """
-        # Parse code: [cl][p][t] e.g. 23009
-        cld = int(code[0]) * 0.15  # design lift coefficient (0.15 increments)
-        p = int(code[1:3]) / 20.0  # position of max camber
-        t = int(code[3:]) / 100.0  # thickness
-        # Camber line (reflex or not)
+        cld = int(code[0]) * 0.15
+        p = int(code[1:3]) / 20.0
+        t = int(code[3:]) / 100.0
         reflex = int(code[3]) >= 5 if len(code) == 5 else False
         beta = np.linspace(0, np.pi, n_points)
         x = 0.5 * (1 - np.cos(beta))
-        # Camber line (see Abbott & von Doenhoff, Table 1, p. 411)
         m = cld / 0.3
         if reflex:
-            k1 = 0.006  # Approximate for reflexed
+            k1 = 0.006
         else:
-            k1 = 0.058  # Approximate for non-reflexed
+            k1 = 0.058
         yc = np.zeros_like(x)
         dyc_dx = np.zeros_like(x)
         for i, xi in enumerate(x):
@@ -297,7 +304,6 @@ class Airfoil:
             else:
                 yc[i] = k1/6 * p**3 * (1-xi)
                 dyc_dx[i] = k1/6 * p**3 * (-1)
-        # Thickness (same as 4-series)
         yt = 5 * t * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1015 * x**4)
         theta = np.arctan(dyc_dx)
         xu = x - yt * np.sin(theta)
@@ -307,6 +313,15 @@ class Airfoil:
         x_coords = np.concatenate([xu[::-1], xl[1:]])
         y_coords = np.concatenate([yu[::-1], yl[1:]])
         coords = np.stack([x_coords, y_coords], axis=1)
+        class NacaSurface:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+            def sample(self, n):
+                idx = np.linspace(0, len(self.x)-1, n).astype(int)
+                return np.stack([self.x[idx], self.y[idx]], axis=1)
+        self.upper_surface = NacaSurface(xu[::-1], yu[::-1])
+        self.lower_surface = NacaSurface(xl[1:], yl[1:])
         return coords
 
     @staticmethod
@@ -335,13 +350,28 @@ class Airfoil:
             self.coordinates = self.equation(n_points)
         return self.coordinates
 
-    def plot(self, save=False):
+    def plot(self, save=False, n_points=200):
         """
         Plot the airfoil shape using matplotlib with a cinematic German-inspired style.
         Args:
             save (bool): If True, save the plot to a PNG file named after the airfoil.
+            n_points (int): Number of points to sample per surface (default 200). If upper/lower surfaces exist, resample them.
         """
-        coords = self.coordinates if self.coordinates is not None else self.generate_coordinates()
+        import matplotlib.pyplot as plt
+        coords = None
+        # If the airfoil was built from upper_surface/lower_surface, resample for smoothness
+        if hasattr(self, 'upper_surface') and hasattr(self, 'lower_surface'):
+            print('good')
+            try:
+                upper_coords = self.upper_surface.sample(n_points//2)
+                lower_coords = self.lower_surface.sample(n_points//2)
+            except Exception:
+                upper_coords = self.upper_surface.samples[:n_points//2]
+                lower_coords = self.lower_surface.samples[:n_points//2]
+            coords = np.vstack((upper_coords, lower_coords[::-1]))
+        else:
+            print('no good')
+            coords = self.coordinates if self.coordinates is not None else self.generate_coordinates()
         fig, ax = plt.subplots(figsize=(10, 4))  # Cinematic aspect ratio
         fig.patch.set_facecolor('black')
         ax.set_facecolor('black')
@@ -354,9 +384,22 @@ class Airfoil:
         ax.spines['left'].set_color('white')
         ax.set_title(f"Airfoil: {self.name}", color='white', fontsize=16, pad=20)
         plt.tight_layout()
+        plt.grid(True)
         if save:
             plt.savefig(f"{self.name}.png", dpi=300, bbox_inches='tight', facecolor='black')
         plt.show()
+
+    def resample(self, n_points=300):
+        """
+        Re-sample the upper and lower splines using curvature-based distribution
+        with a total of `n_points` per surface.
+        Typically used for higher-fidelity plotting or modeling.
+        """
+        if hasattr(self, "upper_curve") and hasattr(self, "lower_curve"):
+            self.upper_points = self.upper_curve.sample(n_points=n_points)
+            self.lower_points = self.lower_curve.sample(n_points=n_points)
+        else:
+            raise AttributeError("Airfoil does not have upper_curve or lower_curve attributes for resampling.")
 
     def export(self, filename, fmt="csv"):
         """
@@ -367,7 +410,7 @@ class Airfoil:
             np.savetxt(filename, coords, delimiter=",", header="x,y", comments="")
         # Add more formats as needed
 
-    def align_to_x_axis(self):
+    def _align_to_x_axis(self):
         """
         Shift and rotate airfoil so that the leading edge is at (0,0),
         the trailing edge is at (1,0), and the chord is horizontal and points right.
@@ -502,7 +545,7 @@ def plot_airfoils(airfoil_list):
     fig, ax = plt.subplots(figsize=(10, 4))
     lines = []
     for af in airfoil_list:
-        af.align_to_x_axis()
+        af._align_to_x_axis()
         coords = af.coordinates
         line, = ax.plot(coords[:,0], coords[:,1], label=af.name, linewidth=2)
         lines.append(line)
