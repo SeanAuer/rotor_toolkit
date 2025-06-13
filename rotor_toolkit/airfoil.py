@@ -8,6 +8,94 @@ import plotly.graph_objects as go
 from scipy.interpolate import BSpline
 
 class Airfoil:
+    @classmethod
+    def from_spline(cls, upper_surface, lower_surface, name=None, n_points=100):
+        """
+        Create an Airfoil from upper and lower spline/curve objects.
+        The objects must implement a .sample(n) method returning an (n, d) ndarray.
+        Args:
+            upper_surface: Curve or spline object with a .sample(n) method (upper surface).
+            lower_surface: Curve or spline object with a .sample(n) method (lower surface).
+            name (str): Name of the airfoil.
+            n_points (int): Number of points to sample per surface.
+        Returns:
+            Airfoil: Constructed airfoil instance.
+        """
+        import numpy as np
+
+        upper_coords = upper_surface.sample(n_points)
+        lower_coords = lower_surface.sample(n_points)
+
+        # Check LE and TE alignment
+        if not np.allclose(upper_coords[0], lower_coords[0], atol=1e-6):
+            raise ValueError("Leading edges do not align between upper and lower surfaces.")
+        if not np.allclose(upper_coords[-1], lower_coords[-1], atol=1e-6):
+            raise ValueError("Trailing edges do not align between upper and lower surfaces.")
+
+        # Combine into full airfoil coordinates
+        coords = np.vstack((upper_coords, lower_coords[::-1]))
+
+        # Ensure closed loop
+        if not np.allclose(coords[0], coords[-1]):
+            coords = np.vstack([coords, coords[0]])
+
+        return cls(name=name, coordinates=coords, n_points=len(coords))
+
+    @classmethod
+    def from_curves(cls, upper_curve, lower_curve, name=None, n_points=100, curve_type='hermite'):
+        """
+        Create an Airfoil from upper and lower curve objects (e.g., QuinticHermiteCurve).
+        Args:
+            upper_curve: Curve object (must have .sample(n) method) for upper surface.
+            lower_curve: Curve object (must have .sample(n) method) for lower surface.
+            name (str): Name of the airfoil.
+            n_points (int): Number of points to sample per surface.
+            curve_type (str): 'hermite' or 'bezier' (future-proof).
+        Returns:
+            Airfoil: Constructed airfoil instance.
+        """
+        import numpy as np
+        # Helper to ensure we have a Curve object, not just a Spline
+        def _curve_from_input(obj, curve_type):
+            if curve_type == 'hermite':
+                from spline_toolkit import QuinticHermiteCurve, QuinticHermiteSpline
+                if isinstance(obj, QuinticHermiteCurve):
+                    return obj
+                elif isinstance(obj, QuinticHermiteSpline):
+                    # Convert Spline to Curve
+                    pts = obj.get_control_points()
+                    tans = obj.get_tangents()
+                    crvs = obj.get_curvatures()
+                    return QuinticHermiteCurve.from_controls(pts, tans, crvs)
+                else:
+                    raise TypeError("Input must be a QuinticHermiteCurve or QuinticHermiteSpline for 'hermite' type.")
+            elif curve_type == 'bezier':
+                # Placeholder for future BezierCurve support
+                raise NotImplementedError("Bezier curve support not yet implemented.")
+            else:
+                raise ValueError(f"Unknown curve_type: {curve_type}")
+
+        upper = _curve_from_input(upper_curve, curve_type)
+        lower = _curve_from_input(lower_curve, curve_type)
+        upper_coords = upper.sample(n_points)
+        lower_coords = lower.sample(n_points)
+        # Check LE and TE alignment
+        if not np.allclose(upper_coords[0], lower_coords[0], atol=1e-6):
+            raise ValueError("Leading edges do not align between upper and lower surfaces.")
+        if not np.allclose(upper_coords[-1], lower_coords[-1], atol=1e-6):
+            raise ValueError("Trailing edges do not align between upper and lower surfaces.")
+        # Combine into full airfoil coordinates
+        coords = np.vstack((upper_coords, lower_coords[::-1]))
+        # Ensure closed loop
+        if not np.allclose(coords[0], coords[-1]):
+            coords = np.vstack([coords, coords[0]])
+        # Create Airfoil and align to x-axis
+        airfoil = cls(name=name, coordinates=coords, n_points=len(coords))
+        airfoil.align_to_x_axis()
+        airfoil.upper_curve = upper
+        airfoil.lower_curve = lower
+        return airfoil
+
     """
     Represents a 2D airfoil shape, defined by coordinates or parametric equations.
     """
@@ -82,19 +170,21 @@ class Airfoil:
         lower_surface_angles,
         upper_trailing_edge_angle=-5.0,
         lower_trailing_edge_angle=5.0,
-        n_points=100
+        n_points=100,
+        curve_type="hermite"
     ):
         """
         Create an Airfoil using control points and tangency angles at each point.
         Args:
             name (str): Airfoil name.
-            upper_surface_control_points (list of [x, y]): Upper surface points (LE/TE optional, positive y expected).
-            lower_surface_control_points (list of [x, y]): Lower surface points (LE/TE optional, negative y expected).
+            upper_surface_control_points (list of [x, y, ...]): Upper surface points.
+            lower_surface_control_points (list of [x, y, ...]): Lower surface points.
             upper_surface_angles (list of float): Tangent angles (deg) at each upper point.
             lower_surface_angles (list of float): Tangent angles (deg) at each lower point.
             upper_trailing_edge_angle (float): TE angle (deg) upper surface.
             lower_trailing_edge_angle (float): TE angle (deg) lower surface.
             n_points (int): Points to sample per surface.
+            curve_type (str): Type of curve to use ("hermite", etc.).
         Returns:
             Airfoil: Airfoil object with interpolated coordinates.
         """
@@ -107,23 +197,19 @@ class Airfoil:
         def process_surface(points, angles, is_upper, trailing_angle):
             points = np.array(points)
             angles = list(angles)
-            # Handle empty input: just LE and TE
             if points.shape[0] == 0:
                 points = np.array([[0.0, 0.0], [1.0, 0.0]])
                 angles = [270.0 if is_upper else 90.0, trailing_angle]
                 return points, angles
-            # Leading edge logic
             if not np.allclose(points[0], [0.0, 0.0]):
                 points = np.vstack([[0.0, 0.0], points])
                 default_le_angle = 270.0 if is_upper else 90.0
                 angles = [default_le_angle] + angles
-            # Trailing edge logic
             if not np.allclose(points[-1], [1.0, 0.0]):
                 points = np.vstack([points, [1.0, 0.0]])
                 angles = angles + [trailing_angle]
             return points, angles
 
-        # Process upper and lower surfaces independently
         upper_cp, upper_angles = process_surface(
             upper_surface_control_points, upper_surface_angles, is_upper=True, trailing_angle=upper_trailing_edge_angle
         )
@@ -131,45 +217,21 @@ class Airfoil:
             lower_surface_control_points, lower_surface_angles, is_upper=False, trailing_angle=lower_trailing_edge_angle
         )
 
-        # Convert angles to tangent vectors
         upper_tangents = np.array([angle_to_vector(a) for a in upper_angles])
-        # For the lower surface, do not flip the y-component of the tangent vectors (preserve user geometry)
         lower_tangents = np.array([angle_to_vector(a) for a in lower_angles])
 
-        def cubic_hermite(P0, P1, T0, T1, t):
-            t = np.asarray(t)
-            h00 = 2*t**3 - 3*t**2 + 1
-            h10 = t**3 - 2*t**2 + t
-            h01 = -2*t**3 + 3*t**2
-            h11 = t**3 - t**2
-            return (h00[:,None]*P0 + h10[:,None]*T0 + h01[:,None]*P1 + h11[:,None]*T1)
+        if curve_type.lower() == "hermite":
+            # Pass full arrays for arbitrary dimensionality; include optional curvature support.
+            upper_curvatures = getattr(cls, '_upper_surface_curvatures', None)
+            lower_curvatures = getattr(cls, '_lower_surface_curvatures', None)
+            upper_curve = QuinticHermiteCurve.from_controls(upper_cp, upper_tangents, upper_curvatures)
+            lower_curve = QuinticHermiteCurve.from_controls(lower_cp, lower_tangents, lower_curvatures)
+        else:
+            raise NotImplementedError(f"Unsupported curve_type: {curve_type}")
 
-        def spline_surface(control_pts, tangents):
-            segments = []
-            for i in range(len(control_pts) - 1):
-                chord = control_pts[i+1][0] - control_pts[i][0]
-                # Scale tangent vectors by local chord for smoothness
-                T0 = tangents[i] * chord
-                T1 = tangents[i+1] * chord
-                def seg_func(t, P0=control_pts[i], P1=control_pts[i+1], T0=T0, T1=T1):
-                    return cubic_hermite(P0, P1, T0, T1, t)
-                segments.append(seg_func)
-            def full_spline(t_array):
-                coords = []
-                n_seg = len(segments)
-                t_array = np.clip(np.array(t_array), 0, 1)
-                for t in t_array:
-                    seg_idx = min(int(t * n_seg), n_seg - 1)
-                    local_t = (t - seg_idx / n_seg) * n_seg
-                    coords.append(segments[seg_idx](np.array([local_t]))[0])
-                return np.array(coords)
-            return full_spline
+        upper_coords = upper_curve.sample(n_points)
+        lower_coords = lower_curve.sample(n_points)
 
-        # Sample upper and lower surfaces
-        t_sample = np.linspace(0, 1, n_points)
-        upper_coords = spline_surface(upper_cp, upper_tangents)(t_sample)
-        lower_coords = spline_surface(lower_cp, lower_tangents)(t_sample)
-        # Do NOT reverse lower_coords; stack as upper (LE to TE), then lower (TE to LE)
         coords = np.vstack((upper_coords, lower_coords[::-1]))
         airfoil = cls(name=name, coordinates=coords, n_points=len(coords))
         airfoil._upper_surface_control_points = upper_cp
