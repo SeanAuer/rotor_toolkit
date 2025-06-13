@@ -358,24 +358,18 @@ class Airfoil:
             n_points (int): Number of points to sample per surface (default 200). If upper/lower surfaces exist, resample them.
         """
         import matplotlib.pyplot as plt
-        coords = None
-        # If the airfoil was built from upper_surface/lower_surface, resample for smoothness
-        if hasattr(self, 'upper_surface') and hasattr(self, 'lower_surface'):
-            print('good')
-            try:
-                upper_coords = self.upper_surface.sample(n_points//2)
-                lower_coords = self.lower_surface.sample(n_points//2)
-            except Exception:
-                upper_coords = self.upper_surface.samples[:n_points//2]
-                lower_coords = self.lower_surface.samples[:n_points//2]
-            coords = np.vstack((upper_coords, lower_coords[::-1]))
-        else:
-            print('no good')
-            coords = self.coordinates if self.coordinates is not None else self.generate_coordinates()
         fig, ax = plt.subplots(figsize=(10, 4))  # Cinematic aspect ratio
         fig.patch.set_facecolor('black')
         ax.set_facecolor('black')
-        ax.plot(coords[:,0], coords[:,1], color='red', linewidth=2)
+        # Plot upper and lower surfaces in the same color, no legend
+        if hasattr(self, 'upper_surface') and hasattr(self, 'lower_surface'):
+            upper_coords = self.upper_surface.sample(n_points//2)
+            lower_coords = self.lower_surface.sample(n_points//2)
+            ax.plot(upper_coords[:,0], upper_coords[:,1], color='red', linewidth=2)
+            ax.plot(lower_coords[:,0], lower_coords[:,1], color='red', linewidth=2)
+        else:
+            coords = self.coordinates if self.coordinates is not None else self.generate_coordinates()
+            ax.plot(coords[:,0], coords[:,1], color='red', linewidth=2)
         ax.set_aspect('equal', adjustable='box')
         ax.tick_params(axis='both', colors='white', which='both')
         ax.spines['bottom'].set_color('white')
@@ -383,8 +377,8 @@ class Airfoil:
         ax.spines['right'].set_color('white')
         ax.spines['left'].set_color('white')
         ax.set_title(f"Airfoil: {self.name}", color='white', fontsize=16, pad=20)
+        ax.grid(True, color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
         plt.tight_layout()
-        plt.grid(True)
         if save:
             plt.savefig(f"{self.name}.png", dpi=300, bbox_inches='tight', facecolor='black')
         plt.show()

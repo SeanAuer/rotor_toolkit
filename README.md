@@ -2,21 +2,29 @@
 
 `rotor_toolkit` is a Python-based design and modeling library for rotorcraft and turbomachinery components, with a focus on modular, parametric geometry generation. The project began as a way to generate and manipulate 2D airfoils but is growing into a pipeline for defining and exporting full 3D rotor or stator assemblies for UAS, turbomachinery, hydrodynamic vehicles, and helicopters.
 
-The toolkit is designed to support exploratory design, optimization, and integration with external analysis and iteration tools. It emphasizes parametric modeling of airfoil and blade sections, with the ability to generate and output clean, structured geometry for downstream applications.
+---
+
+## Requirements
+
+- Python 3.8+
+- [`spline_toolkit`](https://github.com/SeanAuer/spline_toolkit) — required for spline-based geometry definitions
+
+Make sure to install `spline_toolkit` before using the spline-based airfoil generation features.
 
 ---
 
 ## Components
 
 ### `Airfoil`
-- Supports NACA 4-digit and 5-digit generation
-- Can load `.dat` or `.csv` airfoil files
-- Allows user-defined coordinate lists
-- Spline-based generation using B-spline control points
-- Supports chord normalization, alignment, and plotting
-- Returns airfoil characteristics dynamically
+- Supports NACA 4-digit and 5-digit airfoil generation
+- Accepts `.dat` or `.csv` airfoil files
+- Allows fully custom coordinate input
+- Parametric spline generation using control points (via `spline_toolkit`)
+- Chord normalization, alignment to x-axis, and centerline enforcement
+- Interactive plotting with support for matplotlib/plotly
+- Dynamic evaluation of airfoil characteristics
 
-### `Blade` (coming soon)
+### `Blade` (in work)
 - Accepts a list of airfoil sections and spanwise definitions
 - Will support twist, chord, and sweep distributions
 - Generates 3D blade surface for lofting or export
@@ -27,7 +35,7 @@ The toolkit is designed to support exploratory design, optimization, and integra
 - Allows placement of blades with defined angular spacing
 - Simple geometric representation for early design/export
 
-### `Rotor`
+### `Rotor` (planned)
 - Combines blades + hub + orientation
 - Can define stators or rotors
 - Will support clean geometry export (STL, surface grid, etc.)
@@ -49,35 +57,23 @@ The toolkit is designed to support exploratory design, optimization, and integra
 ## Example (Basic)
 
 ```python
-from rotor_toolkit.airfoil import Airfoil
+from rotor_toolkit import Airfoil
 
 # Generate a classic NACA 2412 4-digit airfoil
 af = Airfoil(name="NACA2412", naca_code="2412", n_points=200)
-af.plot(save=True)
-
-# Create a spline NACA 2412 airfoil from control points
-import numpy as np
-control_pts = np.array([
-    [0.0,  0.0],
-    [0.1,  0.06],
-    [0.3,  0.08],
-    [0.6,  0.02],
-    [0.9, -0.01],
-    [1.0,  0.0]])
-spline_af = Airfoil.from_spline("custom_spline", control_pts)
-spline_af.plot()
+af.plot()
 ```
 
 ---
 
 ## Philosophy
 
-This project is intended to provide clarity, extensibility, and practicality for engineers who want direct control over airfoil and rotor geometry in a Python environment.
+`rotor_toolkit` aims to enable parametric rotor and airfoil modeling in a streamlined, Python-based environment.
 
-The goal is to support:
-- Hands-on geometry scripting
-- Rapid iteration
-- Future plug-in compatibility for meshing and MDO workflows
+Goals:
+- Script-based geometry creation and evaluation
+- Quick iteration for design exploration
+- Future integration with meshing, optimization, and export pipelines
 
 ---
 
